@@ -1,0 +1,14 @@
+{
+  "name": "labslot",
+  "version": "1.0.0",
+  "description": "Campus lab slot booking system (SCD Lab 16 open-ended CEP)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-junit": "^16.0.0"
+  }
+}

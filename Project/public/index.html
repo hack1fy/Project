@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabSlot - Lab Booking</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f2f4f8; color: #1b1f24; }
+  header { background: #1f3a5f; color: #fff; padding: 14px 24px; }
+  main { max-width: 960px; margin: 20px auto; padding: 0 16px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  section { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  section.wide { grid-column: 1 / -1; }
+  h2 { margin: 0 0 10px; font-size: 1.05rem; }
+  label { display: block; font-size: .85rem; margin-top: 8px; }
+  select, input, button { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; }
+  button { background: #1f3a5f; color: #fff; border: 0; border-radius: 4px; cursor: pointer; margin-top: 12px; }
+  .row { display: flex; gap: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .slot { padding: 8px 4px; text-align: center; border-radius: 4px; font-size: .85rem; }
+  .free { background: #d9f2df; } .taken { background: #f6d5d5; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: 6px; border-bottom: 1px solid #e3e6ea; }
+  .msg { margin-top: 10px; padding: 8px; border-radius: 4px; display: none; }
+  .ok { background: #d9f2df; display: block; } .err { background: #f6d5d5; display: block; }
+  td button { width: auto; margin: 0; padding: 4px 8px; }
+  @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><h1 style="margin:0;font-size:1.3rem">LabSlot - Campus Lab Booking</h1></header>
+<main>
+  <section>
+    <h2>Book a slot</h2>
+    <label>Acting as <select id="user"></select></label>
+    <label>Lab <select id="lab"></select></label>
+    <label>Date <input type="date" id="date"></label>
+    <div class="row">
+      <label style="flex:1">Start hour <input type="number" id="start" min="8" max="19" value="10"></label>
+      <label style="flex:1">End hour <input type="number" id="end" min="9" max="20" value="12"></label>
+    </div>
+    <label>Purpose <input id="purpose" placeholder="e.g. project work / class"></label>
+    <button id="bookBtn">Book</button>
+    <div id="msg" class="msg"></div>
+  </section>
+  <section>
+    <h2>Availability</h2>
+    <div id="avail" class="grid"></div>
+    <h2 style="margin-top:18px">Notifications for selected user</h2>
+    <ul id="notes" style="padding-left:18px;margin:0"></ul>
+  </section>
+  <section class="wide">
+    <h2>Bookings (selected lab and date)</h2>
+    <table><thead><tr><th>ID</th><th>User</th><th>Time</th><th>Purpose</th><th>Status</th><th></th></tr></thead>
+    <tbody id="rows"></tbody></table>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let users = [];
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.message || body.error || 'Request failed');
+  return body;
+}
+function show(text, ok) { const m = $('msg'); m.textContent = text; m.className = 'msg ' + (ok ? 'ok' : 'err'); }
+const userName = (id) => (users.find((u) => u.id === id) || {}).name || id;
+
+async function refresh() {
+  if (!$('date').value) return;
+  const q = `labId=${$('lab').value}&date=${$('date').value}`;
+  const [slots, bookings, notes] = await Promise.all([
+    api('/api/availability?' + q),
+    api('/api/bookings?' + q),
+    api('/api/notifications?userId=' + $('user').value),
+  ]);
+  $('avail').innerHTML = slots.map((s) =>
+    `<div class="slot ${s.free ? 'free' : 'taken'}">${s.hour}:00<br>${s.free ? 'free' : 'booked'}</div>`).join('');
+  $('rows').innerHTML = bookings.map((b) =>
+    `<tr><td>${b.id}</td><td>${userName(b.userId)}</td><td>${b.startHour}:00-${b.endHour}:00</td><td>${b.purpose || ''}</td><td>${b.status}</td>
+     <td>${b.status === 'CONFIRMED' ? `<button onclick="cancelBooking(${b.id})">Cancel</button>` : ''}</td></tr>`).join('');
+  $('notes').innerHTML = notes.length ? notes.map((n) => `<li>${n.message}</li>`).join('') : '<li>None</li>';
+}
+
+async function cancelBooking(id) {
+  try { await api(`/api/bookings/${id}?actorId=${$('user').value}`, { method: 'DELETE' }); show('Booking cancelled', true); }
+  catch (e) { show(e.message, false); }
+  refresh();
+}
+
+$('bookBtn').onclick = async () => {
+  try {
+    const r = await api('/api/bookings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: $('user').value, labId: $('lab').value, date: $('date').value,
+        startHour: Number($('start').value), endHour: Number($('end').value), purpose: $('purpose').value,
+      }),
+    });
+    show(r.bumped.length ? `Booked. ${r.bumped.length} lower-priority booking(s) were bumped and notified.` : 'Booked successfully', true);
+  } catch (e) { show(e.message, false); }
+  refresh();
+};
+
+['user', 'lab', 'date'].forEach((id) => $(id).addEventListener('change', refresh));
+
+(async () => {
+  users = await api('/api/users');
+  const labs = await api('/api/labs');
+  $('user').innerHTML = users.map((u) => `<option value="${u.id}">${u.name}</option>`).join('');
+  $('lab').innerHTML = labs.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  $('date').value = d.toISOString().slice(0, 10);
+  refresh();
+})();
+</script>
+</body>
+</html>
